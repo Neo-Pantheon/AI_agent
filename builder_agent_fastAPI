@@ -1,0 +1,56 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List
+import openai
+import os
+
+# Load your OpenAI API key securely
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+app = FastAPI(title="Builder Agent API")
+
+# === Define request and response models ===
+
+class BuildInstruction(BaseModel):
+    instruction: str
+
+class BlockPlacement(BaseModel):
+    x: int
+    y: int
+    z: int
+    block_type: str
+
+class BuildPlan(BaseModel):
+    steps: List[BlockPlacement]
+
+# === Core LLM-based Builder Logic ===
+
+def interpret_instruction(instruction: str) -> List[BlockPlacement]:
+    prompt = f"""
+You are a Minecraft-style building agent.
+Translate the following instruction into a list of structured block placements.
+Each placement must have x, y, z coordinates and a block_type.
+
+Instruction: "{instruction}"
+
+Return the result as a list of JSON objects like:
+[{{"x":0, "y":0, "z":0, "block_type":"stone"}}, ...]
+"""
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+
+    try:
+        output = eval(response['choices'][0]['message']['content'])  # Use safer parsing in production!
+        return [BlockPlacement(**step) for step in output]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse response: {str(e)}")
+
+# === FastAPI Endpoint ===
+
+@app.post("/build", response_model=BuildPlan)
+def build_from_instruction(data: BuildInstruction):
+    steps = interpret_instruction(data.instruction)
+    return BuildPlan(steps=steps)
